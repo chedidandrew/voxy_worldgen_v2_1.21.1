@@ -5,11 +5,11 @@
   "name": "Voxy World Gen V2",
   "description": "Optimized passive chunk generation with Voxy integration",
   "authors": [
-    "ethan"
+    "iSeeEthan"
   ],
   "contact": {},
-  "license": "MIT",
-  "icon": "assets/voxyworldgenv2/icon.png",
+  "license": "CUSTOM",
+  "icon": "logo.png",
   "environment": "*",
   "mixins": [
     "voxyworldgenv2.mixins.json"
