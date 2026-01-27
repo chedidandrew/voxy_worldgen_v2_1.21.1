@@ -28,10 +28,10 @@ public final class VoxyIntegration {
                 Field instanceField = ingestServiceClass.getDeclaredField("INSTANCE");
                 serviceInstance = instanceField.get(null);
             } catch (Exception ignored) {
-                // INSTANCE might not exist or be accessible
+                // instance might not exist or be accessible
             }
 
-            // 1. Find method using standard Reflection (avoids guessing exact return type)
+            // 1. find method using standard reflection (avoids guessing exact return type)
             String[] commonMethods = {"ingestChunk", "tryAutoIngestChunk", "enqueueIngest", "ingest"};
             Method targetMethod = null;
             
@@ -43,12 +43,12 @@ public final class VoxyIntegration {
             }
 
             if (targetMethod != null) {
-                // 2. Convert to MethodHandle for performance
+                // 2. convert to methodhandle for performance
                 MethodHandles.Lookup lookup = MethodHandles.lookup();
                 try {
                     ingestMethod = lookup.unreflect(targetMethod);
                     
-                    // 3. Bind to instance if it exists and method is instance-based
+                    // 3. bind to instance if it exists and method is instance-based
                     if (serviceInstance != null && !Modifier.isStatic(targetMethod.getModifiers())) {
                         ingestMethod = ingestMethod.bindTo(serviceInstance);
                     }

@@ -61,7 +61,7 @@ public final class ChunkGenerationManager {
     public void initialize(MinecraftServer server) {
         this.server = server;
         this.running.set(true);
-        // Default pause check: assume unpaused unless configured otherwise (e.g. by client mod)
+        // default pause check: assume unpaused unless configured otherwise (e.g. by client mod)
         this.pauseCheck = () -> false; 
         Config.load();
         this.throttle = new Semaphore(Config.DATA.maxActiveTasks);
@@ -142,7 +142,7 @@ public final class ChunkGenerationManager {
                 }
 
                 // 2. filter batch on main thread (safe hasChunk check)
-                // We use a join here to backpressure the worker so it doesn't spin too fast
+                // we use a join here to backpressure the worker so it doesn't spin too fast
                 CompletableFuture<List<ChunkPos>> filterTask = CompletableFuture.supplyAsync(() -> {
                     List<ChunkPos> toGenerate = new ArrayList<>();
                     if (currentLevel == null) return toGenerate; // safety check
@@ -157,8 +157,8 @@ public final class ChunkGenerationManager {
                                 toGenerate.add(pos);
                             }
                         } catch (Exception e) {
-                            // If check fails, assume we need to process it to be safe, or skip?
-                            // Safe to skip effectively to avoid crashing
+                            // if check fails, assume we need to process it to be safe, or skip?
+                            // safe to skip effectively to avoid crashing
                         }
                     }
                     return toGenerate;
@@ -194,7 +194,7 @@ public final class ChunkGenerationManager {
     private boolean processChunk(ChunkPos pos) {
         long key = pos.toLong();
         
-        // Note: checking completedChunks/hasChunk is done in batch before this method
+        // note: checking completedchunks/haschunk is done in batch before this method
         
         if (trackedChunks.add(key)) {
             activeTaskCount.incrementAndGet();
