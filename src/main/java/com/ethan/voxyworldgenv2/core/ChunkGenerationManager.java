@@ -16,6 +16,10 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
+import it.unimi.dsi.fastutil.longs.LongSets;
+
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Set;
@@ -29,9 +33,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ChunkGenerationManager {
     private static final ChunkGenerationManager INSTANCE = new ChunkGenerationManager();
     
-    // sets
-    private final Set<Long> completedChunks = ConcurrentHashMap.newKeySet();
-    private final Set<Long> trackedChunks = ConcurrentHashMap.newKeySet();
+    // sets - we use primitive sets to reduce gc pressure
+    private final LongSet completedChunks = LongSets.synchronize(new LongOpenHashSet());
+    private final LongSet trackedChunks = LongSets.synchronize(new LongOpenHashSet());
     
     // state
     private final AtomicInteger activeTaskCount = new AtomicInteger(0);
@@ -140,42 +144,83 @@ public final class ChunkGenerationManager {
                 long batchKey = DistanceGraph.getBatchKey(batch.get(0).x, batch.get(0).z);
                 batchCounters.put(batchKey, new AtomicInteger(batch.size()));
 
-                // filter batch on main thread
-                CompletableFuture<List<ChunkPos>> filterTask = CompletableFuture.supplyAsync(() -> {
-                    List<ChunkPos> toGenerate = new ArrayList<>();
-                    if (currentLevel == null) return toGenerate;
-                    
-                    for (ChunkPos pos : batch) {
-                        try {
-                            if (currentLevel.hasChunk(pos.x, pos.z)) {
-                                onSuccess(pos); // already exists
-                            } else {
-                                toGenerate.add(pos);
-                            }
-                        } catch (Exception e) {
-                            toGenerate.add(pos);
-                        }
+                // skip if already tracked locally to save throttle
+                List<ChunkPos> preFiltered = new ArrayList<>(batch.size());
+                for (ChunkPos pos : batch) {
+                    long key = pos.toLong();
+                    if (completedChunks.contains(key) || trackedChunks.contains(key)) {
+                        onSuccess(pos); // skip locally
+                    } else {
+                        preFiltered.add(pos);
                     }
-                    return toGenerate;
-                }, server);
+                }
 
-                List<ChunkPos> toGenerate = filterTask.join();
-                
-                if (toGenerate.isEmpty()) {
-                    // all skipped, cleanup
+                if (preFiltered.isEmpty()) {
+                    // cleanup skip
                     trackedBatches.remove(batchKey);
                     batchCounters.remove(batchKey);
                     continue;
                 }
 
-                // submit tasks
-                for (ChunkPos pos : toGenerate) {
+                // batch dispatch to main thread
+                List<ChunkPos> readyToGenerate = new ArrayList<>();
+                for (ChunkPos pos : preFiltered) {
                     if (!workerRunning.get()) break;
+                    
                     throttle.acquire();
-                    if (!processChunk(pos)) {
+                    
+                    if (trackedChunks.add(pos.toLong())) {
+                        activeTaskCount.incrementAndGet();
+                        stats.incrementQueued();
+                        readyToGenerate.add(pos);
+                    } else {
                         throttle.release();
-                        onFailure(pos); // mark as failed to decremement batch counter
+                        onFailure(pos); // already being tracked
                     }
+                }
+
+                if (!readyToGenerate.isEmpty()) {
+                    server.execute(() -> {
+                        if (currentLevel == null) {
+                            for (ChunkPos p : readyToGenerate) completeTask(p);
+                            return;
+                        }
+                        
+                        // add tickets and update in one go
+                        ServerChunkCache cache = currentLevel.getChunkSource();
+                        List<ChunkPos> actuallyGenerate = new ArrayList<>();
+                        
+                        for (ChunkPos pos : readyToGenerate) {
+                            if (currentLevel.hasChunk(pos.x, pos.z)) {
+                                onSuccess(pos);
+                                completeTask(pos);
+                            } else {
+                                cache.addTicketWithRadius(TicketType.FORCED, pos, 0);
+                                actuallyGenerate.add(pos);
+                            }
+                        }
+                        
+                        if (!actuallyGenerate.isEmpty()) {
+                            // single update call for batch
+                            ((ServerChunkCacheMixin) cache).invokeRunDistanceManagerUpdates();
+                            
+                            for (ChunkPos pos : actuallyGenerate) {
+                                ((ServerChunkCacheMixin) cache).invokeGetChunkFutureMainThread(pos.x, pos.z, ChunkStatus.FULL, true)
+                                    .whenCompleteAsync((result, throwable) -> {
+                                        if (throwable == null && result != null && result.isSuccess() && result.orElse(null) instanceof LevelChunk chunk) {
+                                            onSuccess(pos);
+                                            // air chunk skip for voxy
+                                            if (!chunk.isEmpty()) {
+                                                VoxyIntegration.ingestChunk(chunk);
+                                            }
+                                        } else {
+                                            onFailure(pos);
+                                        }
+                                        server.execute(() -> cleanupTask(cache, pos));
+                                    }, server);
+                            }
+                        }
+                    });
                 }
 
             } catch (InterruptedException e) {
@@ -188,23 +233,7 @@ public final class ChunkGenerationManager {
         }
     }
 
-    // returns true if task submitted, false if skipped/failed
-    private boolean processChunk(ChunkPos pos) {
-        long key = pos.toLong();
-        
-        // note: checking completedchunks/haschunk is done in batch before this method
-        
-        if (trackedChunks.add(key)) {
-            activeTaskCount.incrementAndGet();
-            stats.incrementQueued();
-            
-            // dispatch to main thread for safe ticket addition
-            server.execute(() -> generateChunk(currentLevel, pos));
-            return true;
-        }
-        
-        return false;
-    }
+    // processchunk logic is now inlined in workerloop for batching
 
     public void tick() {
         if (!running.get() || server == null) return;
@@ -219,6 +248,7 @@ public final class ChunkGenerationManager {
         }
         
         tpsMonitor.tick();
+        stats.tick();
         checkPlayerMovement();
     }
     
@@ -234,11 +264,17 @@ public final class ChunkGenerationManager {
              setupLevel((ServerLevel) player.level());
         }
 
-        // update radius stats if moved
-        if (lastPlayerPos == null || !lastPlayerPos.equals(currentPos)) {
+        // rescan if player moved significantly (2 chunks)
+        if (lastPlayerPos == null || distSq(lastPlayerPos, currentPos) >= 4) {
             lastPlayerPos = currentPos;
             restartScan(currentPos);
         }
+    }
+
+    private double distSq(ChunkPos a, ChunkPos b) {
+        int dx = a.x - b.x;
+        int dz = a.z - b.z;
+        return (double) dx * dx + dz * dz;
     }
 
     private void setupLevel(ServerLevel newLevel) {
@@ -277,31 +313,11 @@ public final class ChunkGenerationManager {
         if (current != target) {
              int diff = target - current;
              if (diff > 0) throttle.release(diff);
-             else throttle.tryAcquire(-diff); // simplistic, works for small changes
+             else throttle.tryAcquire(-diff); // simplistic is the best!
         }
     }
     
-    private void generateChunk(ServerLevel level, ChunkPos pos) {
-        ServerChunkCache cache = level.getChunkSource();
-        
-        cache.addTicketWithRadius(TicketType.FORCED, pos, 0);
-        
-        // force immediate update
-        ((ServerChunkCacheMixin) cache).invokeRunDistanceManagerUpdates();
-        
-        ((ServerChunkCacheMixin) cache).invokeGetChunkFutureMainThread(pos.x, pos.z, ChunkStatus.FULL, true)
-            .whenCompleteAsync((result, throwable) -> {
-                if (throwable == null && result != null && result.isSuccess() && result.orElse(null) instanceof LevelChunk chunk) {
-                    onSuccess(pos);
-                    // offload voxy ingestion
-                    CompletableFuture.runAsync(() -> VoxyIntegration.ingestChunk(chunk))
-                        .whenComplete((v, t) -> cleanupTask(cache, pos));
-                } else {
-                    onFailure(pos);
-                    cleanupTask(cache, pos);
-                }
-            }, server);
-    }
+    // note to self: generatechunk logic is now inlined in workerloop
 
     private void cleanupTask(ServerChunkCache cache, ChunkPos pos) {
         server.execute(() -> {

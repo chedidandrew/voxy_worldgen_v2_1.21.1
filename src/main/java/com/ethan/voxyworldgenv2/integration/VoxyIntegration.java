@@ -31,7 +31,7 @@ public final class VoxyIntegration {
                 // instance might not exist or be accessible
             }
 
-            // 1. find method using standard reflection (avoids guessing exact return type)
+            // find method using standard reflection
             String[] commonMethods = {"ingestChunk", "tryAutoIngestChunk", "enqueueIngest", "ingest"};
             Method targetMethod = null;
             

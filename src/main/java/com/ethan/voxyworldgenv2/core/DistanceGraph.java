@@ -12,14 +12,15 @@ import java.util.*;
  * L3: 8x8 L2 (2048x2048) -> entry point
  */
 public class DistanceGraph {
-    private static final int BATCH_SIZE = 4;
-    private static final int NODE_SIZE = 8;
+    private static final int BATCH_SIZE_SHIFT = 2; // 4 chunks
+    private static final int NODE_SIZE_BITS = 3;   // 8 nodes
+    private static final int ROOT_SIZE_SHIFT = 9;  // 512 nodes
     
     private final Map<Long, Node> roots = new ConcurrentHashMap<>();
 
     private static class Node {
         final int level;
-        final int x, z; // Level-space coordinates
+        final int x, z; // level-space coords
         long fullMask = 0;
         final Map<Integer, Object> children = new ConcurrentHashMap<>();
 
@@ -33,13 +34,12 @@ public class DistanceGraph {
     }
 
     public void markChunkCompleted(int cx, int cz) {
-        int bx = Math.floorDiv(cx, BATCH_SIZE);
-        int bz = Math.floorDiv(cz, BATCH_SIZE);
+        int bx = cx >> BATCH_SIZE_SHIFT;
+        int bz = cz >> BATCH_SIZE_SHIFT;
         int bit = (cx & 3) + ((cz & 3) << 2);
 
-        int rootSize = 512;
-        int rx = Math.floorDiv(bx, rootSize);
-        int rz = Math.floorDiv(bz, rootSize);
+        int rx = bx >> ROOT_SIZE_SHIFT;
+        int rz = bz >> ROOT_SIZE_SHIFT;
         long rootKey = ChunkPos.asLong(rx, rz);
 
         Node root = roots.computeIfAbsent(rootKey, k -> new Node(3, rx, rz));
@@ -63,8 +63,8 @@ public class DistanceGraph {
             }
         } else {
             Node child = (Node) node.children.computeIfAbsent(idx, k -> {
-                int cx = (node.x << NODE_SIZE) + (k & 0x7);
-                int cz = (node.z << NODE_SIZE) + (k >> 3);
+                int cx = (node.x << NODE_SIZE_BITS) + (k & 0x7);
+                int cz = (node.z << NODE_SIZE_BITS) + (k >> 3);
                 return new Node(node.level - 1, cx, cz);
             });
             recursiveMark(child, bx, bz, bit);
@@ -78,24 +78,24 @@ public class DistanceGraph {
     }
 
     public List<ChunkPos> findWork(ChunkPos center, int radiusChunks, Set<Long> trackedBatches) {
-        int cbx = Math.floorDiv(center.x, BATCH_SIZE);
-        int cbz = Math.floorDiv(center.z, BATCH_SIZE);
-        int rb = (radiusChunks + 3) / BATCH_SIZE;
+        int cbx = center.x >> BATCH_SIZE_SHIFT;
+        int cbz = center.z >> BATCH_SIZE_SHIFT;
+        int rb = (radiusChunks + 3) >> BATCH_SIZE_SHIFT;
 
         PriorityQueue<WorkItem> queue = new PriorityQueue<>(Comparator.comparingDouble(i -> i.distSq));
 
-        int rootSize = 512;
-        int rbxMin = Math.floorDiv(cbx - rb, rootSize);
-        int rbxMax = Math.floorDiv(cbx + rb, rootSize);
-        int rbzMin = Math.floorDiv(cbz - rb, rootSize);
-        int rbzMax = Math.floorDiv(cbz + rb, rootSize);
+        int rootSize = 1 << ROOT_SIZE_SHIFT;
+        int rbxMin = (cbx - rb) >> ROOT_SIZE_SHIFT;
+        int rbxMax = (cbx + rb) >> ROOT_SIZE_SHIFT;
+        int rbzMin = (cbz - rb) >> ROOT_SIZE_SHIFT;
+        int rbzMax = (cbz + rb) >> ROOT_SIZE_SHIFT;
 
         for (int rx = rbxMin; rx <= rbxMax; rx++) {
             for (int rz = rbzMin; rz <= rbzMax; rz++) {
                 Node root = roots.get(ChunkPos.asLong(rx, rz));
                 // check empty space even if node is null
                 double dSq = getDistSq(rx, rz, rootSize, cbx, cbz);
-                if (dSq <= (rb + rootSize) * (rb + rootSize)) {
+                if (dSq <= (double)(rb + rootSize) * (rb + rootSize)) {
                     queue.add(new WorkItem(root, 3, rx, rz, dSq));
                 }
             }
@@ -130,7 +130,7 @@ public class DistanceGraph {
                 int cz = (item.z << 3) + (i >> 3);
                 
                 double dSq = getDistSq(cx, cz, childSize, cbx, cbz);
-                if (dSq <= (rb + childSize) * (rb + childSize)) {
+                if (dSq <= (double)(rb + childSize) * (rb + childSize)) {
                     Object child = (item.node == null) ? null : item.node.children.get(i);
                     Node childNode = (child instanceof Node) ? (Node) child : null;
                     queue.add(new WorkItem(childNode, childLevel, cx, cz, dSq));
@@ -142,28 +142,28 @@ public class DistanceGraph {
 
     private double getDistSq(int nx, int nz, int size, int cbx, int cbz) {
         // distance to nearest edge of node
-        double dx = Math.max(0, Math.max(nx * size - cbx, cbx - (nx + 1) * size + 1));
-        double dz = Math.max(0, Math.max(nz * size - cbz, cbz - (nz + 1) * size + 1));
+        double dx = Math.max(0, Math.max((double)nx * size - cbx, (double)cbx - (nx + 1) * size + 1));
+        double dz = Math.max(0, Math.max((double)nz * size - cbz, (double)cbz - (nz + 1) * size + 1));
         return dx * dx + dz * dz;
     }
 
     private int getLocalIndex(int level, int bx, int bz) {
         int shift = (level - 1) * 3;
-        int lx = Math.floorMod(Math.floorDiv(bx, 1 << shift), 8);
-        int lz = Math.floorMod(Math.floorDiv(bz, 1 << shift), 8);
+        int lx = (bx >> shift) & 7;
+        int lz = (bz >> shift) & 7;
         return lx + (lz << 3);
     }
 
     public int countMissingInRange(ChunkPos center, int radiusChunks) {
-        int cbx = Math.floorDiv(center.x, 4);
-        int cbz = Math.floorDiv(center.z, 4);
-        int rb = (radiusChunks + 3) / 4;
+        int cbx = center.x >> BATCH_SIZE_SHIFT;
+        int cbz = center.z >> BATCH_SIZE_SHIFT;
+        int rb = (radiusChunks + 3) >> BATCH_SIZE_SHIFT;
 
-        int rootSize = 512;
-        int rbxMin = Math.floorDiv(cbx - rb, rootSize);
-        int rbxMax = Math.floorDiv(cbx + rb, rootSize);
-        int rbzMin = Math.floorDiv(cbz - rb, rootSize);
-        int rbzMax = Math.floorDiv(cbz + rb, rootSize);
+        int rootSize = 1 << ROOT_SIZE_SHIFT;
+        int rbxMin = (cbx - rb) >> ROOT_SIZE_SHIFT;
+        int rbxMax = (cbx + rb) >> ROOT_SIZE_SHIFT;
+        int rbzMin = (cbz - rb) >> ROOT_SIZE_SHIFT;
+        int rbzMax = (cbz + rb) >> ROOT_SIZE_SHIFT;
 
         int count = 0;
         for (int rx = rbxMin; rx <= rbxMax; rx++) {
@@ -177,7 +177,7 @@ public class DistanceGraph {
 
     private int recursiveCount(Node node, int level, int nx, int nz, int cbx, int cbz, int rb) {
         int size = 1 << (3 * level);
-        if (getDistSq(nx, nz, size, cbx, cbz) > rb * rb) return 0;
+        if (getDistSq(nx, nz, size, cbx, cbz) > (double)rb * rb) return 0;
         if (node != null && node.isFull()) return 0;
 
         if (level == 0) return 1; // batch
@@ -189,7 +189,7 @@ public class DistanceGraph {
                 for (int i = 0; i < 64; i++) {
                     int bx = (nx << 3) + (i & 7);
                     int bz = (nz << 3) + (i >> 3);
-                    if (getDistSq(bx, bz, 1, cbx, cbz) <= rb * rb) c += 16;
+                    if (getDistSq(bx, bz, 1, cbx, cbz) <= (double)rb * rb) c += 16;
                 }
                 return c;
             }
@@ -210,7 +210,7 @@ public class DistanceGraph {
                 if ((node.fullMask & (1L << i)) != 0) continue;
                 int bx = (nx << 3) + (i & 7);
                 int bz = (nz << 3) + (i >> 3);
-                if (getDistSq(bx, bz, 1, cbx, cbz) <= rb * rb) {
+                if (getDistSq(bx, bz, 1, cbx, cbz) <= (double)rb * rb) {
                     Integer mask = (Integer) node.children.getOrDefault(i, 0);
                     c += (16 - Integer.bitCount(mask));
                 }
@@ -242,6 +242,6 @@ public class DistanceGraph {
     }
 
     public static long getBatchKey(int cx, int cz) {
-        return ChunkPos.asLong(Math.floorDiv(cx, 4), Math.floorDiv(cz, 4));
+        return ChunkPos.asLong(cx >> 2, cz >> 2);
     }
 }
