@@ -55,6 +55,8 @@ public final class ChunkGenerationManager {
     private ServerLevel currentLevel = null;
     private ChunkPos lastPlayerPos = null;
     private java.util.function.BooleanSupplier pauseCheck = () -> false;
+    private boolean tellusActive = false;
+    private final Map<Long, com.ethan.voxyworldgenv2.integration.TellusIntegration.TellusChunkData> tellusPendingHeights = new ConcurrentHashMap<>();
     
     // worker
     private Thread workerThread;
@@ -116,7 +118,7 @@ public final class ChunkGenerationManager {
     private void workerLoop() {
         while (workerRunning.get() && running.get()) {
             try {
-                if (server == null || currentLevel == null) {
+                if (!Config.DATA.enabled || server == null || currentLevel == null) {
                     Thread.sleep(100);
                     continue;
                 }
@@ -133,8 +135,10 @@ public final class ChunkGenerationManager {
                 }
                 ChunkPos center = players.iterator().next().chunkPosition();
 
+                int radius = tellusActive ? Math.max(Config.DATA.generationRadius, 128) : Config.DATA.generationRadius;
+
                 // get next batch
-                List<ChunkPos> batch = distanceGraph.findWork(center, Config.DATA.generationRadius, trackedBatches);
+                List<ChunkPos> batch = distanceGraph.findWork(center, radius, trackedBatches);
                 
                 if (batch == null) {
                     Thread.sleep(100);
@@ -144,25 +148,24 @@ public final class ChunkGenerationManager {
                 long batchKey = DistanceGraph.getBatchKey(batch.get(0).x, batch.get(0).z);
                 batchCounters.put(batchKey, new AtomicInteger(batch.size()));
 
-                // skip if already tracked locally to save throttle
+                // skip if already tracked locally
                 List<ChunkPos> preFiltered = new ArrayList<>(batch.size());
                 for (ChunkPos pos : batch) {
                     long key = pos.toLong();
                     if (completedChunks.contains(key) || trackedChunks.contains(key)) {
-                        onSuccess(pos); // skip locally
+                        onSuccess(pos);
                     } else {
                         preFiltered.add(pos);
                     }
                 }
 
                 if (preFiltered.isEmpty()) {
-                    // cleanup skip
                     trackedBatches.remove(batchKey);
                     batchCounters.remove(batchKey);
                     continue;
                 }
 
-                // batch dispatch to main thread
+                // dispatch tasks
                 List<ChunkPos> readyToGenerate = new ArrayList<>();
                 for (ChunkPos pos : preFiltered) {
                     if (!workerRunning.get()) break;
@@ -172,10 +175,19 @@ public final class ChunkGenerationManager {
                     if (trackedChunks.add(pos.toLong())) {
                         activeTaskCount.incrementAndGet();
                         stats.incrementQueued();
+                        
+                        if (tellusActive) {
+                            // sample data for tellus on worker thread
+                            var data = com.ethan.voxyworldgenv2.integration.TellusIntegration.sampleData(currentLevel, pos);
+                            if (data != null) {
+                                tellusPendingHeights.put(pos.toLong(), data);
+                            }
+                        }
+                        
                         readyToGenerate.add(pos);
                     } else {
                         throttle.release();
-                        onFailure(pos); // already being tracked
+                        onFailure(pos);
                     }
                 }
 
@@ -186,13 +198,22 @@ public final class ChunkGenerationManager {
                             return;
                         }
                         
-                        // add tickets and update in one go
                         ServerChunkCache cache = currentLevel.getChunkSource();
                         List<ChunkPos> actuallyGenerate = new ArrayList<>();
                         
                         for (ChunkPos pos : readyToGenerate) {
                             if (currentLevel.hasChunk(pos.x, pos.z)) {
                                 onSuccess(pos);
+                                completeTask(pos);
+                            } else if (tellusActive) {
+                                // fast path for tellus
+                                var data = tellusPendingHeights.remove(pos.toLong());
+                                if (data != null) {
+                                    com.ethan.voxyworldgenv2.integration.TellusIntegration.generateFromHeights(currentLevel, pos, data);
+                                    onSuccess(pos);
+                                } else {
+                                    onFailure(pos);
+                                }
                                 completeTask(pos);
                             } else {
                                 cache.addTicketWithRadius(TicketType.FORCED, pos, 0);
@@ -201,7 +222,6 @@ public final class ChunkGenerationManager {
                         }
                         
                         if (!actuallyGenerate.isEmpty()) {
-                            // single update call for batch
                             ((ServerChunkCacheMixin) cache).invokeRunDistanceManagerUpdates();
                             
                             for (ChunkPos pos : actuallyGenerate) {
@@ -209,7 +229,6 @@ public final class ChunkGenerationManager {
                                     .whenCompleteAsync((result, throwable) -> {
                                         if (throwable == null && result != null && result.isSuccess() && result.orElse(null) instanceof LevelChunk chunk) {
                                             onSuccess(pos);
-                                            // air chunk skip for voxy
                                             if (!chunk.isEmpty()) {
                                                 VoxyIntegration.ingestChunk(chunk);
                                             }
@@ -227,13 +246,11 @@ public final class ChunkGenerationManager {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                VoxyWorldGenV2.LOGGER.error("error in generation worker", e);
+                VoxyWorldGenV2.LOGGER.error("error in worker loop", e);
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
             }
         }
     }
-
-    // processchunk logic is now inlined in workerloop for batching
 
     public void tick() {
         if (!running.get() || server == null) return;
@@ -259,12 +276,11 @@ public final class ChunkGenerationManager {
         ServerPlayer player = players.iterator().next();
         ChunkPos currentPos = player.chunkPosition();
         
-        // update level if changed
         if (player.level() != currentLevel) {
              setupLevel((ServerLevel) player.level());
         }
 
-        // rescan if player moved significantly (2 chunks)
+        // rescan if player moved significantly
         if (lastPlayerPos == null || distSq(lastPlayerPos, currentPos) >= 4) {
             lastPlayerPos = currentPos;
             restartScan(currentPos);
@@ -284,13 +300,18 @@ public final class ChunkGenerationManager {
         
         currentLevel = newLevel;
         currentDimensionKey = newLevel.dimension();
+        tellusActive = com.ethan.voxyworldgenv2.integration.TellusIntegration.isTellusWorld(newLevel);
+        
+        if (tellusActive) {
+            VoxyWorldGenV2.LOGGER.info("tellus world detected, enabling fast generation");
+        }
+        
         completedChunks.clear();
         trackedChunks.clear();
         trackedBatches.clear();
         batchCounters.clear();
         ChunkPersistence.load(newLevel, currentDimensionKey, completedChunks);
         
-        // populate distance graph
         for (long pos : completedChunks) {
             distanceGraph.markChunkCompleted(ChunkPos.getX(pos), ChunkPos.getZ(pos));
         }
@@ -302,23 +323,20 @@ public final class ChunkGenerationManager {
     }
     
     private void restartScan(ChunkPos center) {
-        int radius = Config.DATA.generationRadius;
+        int radius = tellusActive ? Math.max(Config.DATA.generationRadius, 128) : Config.DATA.generationRadius;
         remainingInRadius.set(distanceGraph.countMissingInRange(center, radius));
     }
 
     private void updateThrottleCapacity() {
         int target = Config.DATA.maxActiveTasks;
         int current = throttle.availablePermits() + activeTaskCount.get();
-        // update permit count if config changed
         if (current != target) {
              int diff = target - current;
              if (diff > 0) throttle.release(diff);
-             else throttle.tryAcquire(-diff); // simplistic is the best!
+             else throttle.tryAcquire(-diff);
         }
     }
     
-    // note to self: generatechunk logic is now inlined in workerloop
-
     private void cleanupTask(ServerChunkCache cache, ChunkPos pos) {
         server.execute(() -> {
             cache.removeTicketWithRadius(TicketType.FORCED, pos, 0);
@@ -342,7 +360,6 @@ public final class ChunkGenerationManager {
     
     private void onFailure(ChunkPos pos) {
         stats.incrementFailed();
-        // decrement so it counts as attempted
         remainingInRadius.decrementAndGet();
         decrementBatch(pos);
     }
@@ -357,9 +374,10 @@ public final class ChunkGenerationManager {
     }
     
     private void completeTask(ChunkPos pos) {
-        trackedChunks.remove(pos.toLong());
-        activeTaskCount.decrementAndGet();
-        throttle.release(); // wake up the worker thread
+        if (trackedChunks.remove(pos.toLong())) {
+            activeTaskCount.decrementAndGet();
+            throttle.release();
+        }
     }
     
     public void scheduleConfigReload() {
@@ -370,7 +388,7 @@ public final class ChunkGenerationManager {
     public int getActiveTaskCount() { return activeTaskCount.get(); }
     public int getRemainingInRadius() { return remainingInRadius.get(); }
     public boolean isThrottled() { return tpsMonitor.isThrottled(); }
-    public int getQueueSize() { return 0; } // implicit in worker
+    public int getQueueSize() { return 0; }
     
     public void setPauseCheck(java.util.function.BooleanSupplier check) {
         this.pauseCheck = check;

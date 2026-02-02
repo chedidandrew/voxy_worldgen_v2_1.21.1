@@ -9,17 +9,14 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-
-
 public class VoxyWorldGenV2 implements ModInitializer {
     public static final String MOD_ID = "voxyworldgenv2";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     @Override
     public void onInitialize() {
-        VoxyWorldGenV2.LOGGER.info("initializing voxy world gen v2");
+        LOGGER.info("voxy world gen v2 initializing");
         com.ethan.voxyworldgenv2.core.Config.load();
-        
         
         // server lifecycle events
         ServerLifecycleEvents.SERVER_STARTED.register(ServerEventHandler::onServerStarted);

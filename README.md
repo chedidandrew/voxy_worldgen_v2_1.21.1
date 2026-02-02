@@ -8,10 +8,11 @@ This is a rewrite of my old Voxy World Gen mod, this mod is NOT a fork of the pa
 
 - Generates chunks very fast in the background and auto-ingest them with voxy.
 - Configurable generation speed and queue size.
+- Tellus integration. https://github.com/Yucareux/Tellus
 
 ## Dependencies
 
-- **Minecraft**: 1.21.11
+- **Minecraft**: 1.21.6 - 1.21.11 (Tested on 1.21.11, anything less is considered unstable and may not work)
 - **Fabric Loader**: >= 0.16.0
 - **Java**: 21 (Required)
 - **Fabric API**

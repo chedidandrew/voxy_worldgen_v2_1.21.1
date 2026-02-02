@@ -6,10 +6,10 @@ import java.util.*;
 
 /**
  * track chunk generation state in a hierarchy
- * L0: 4x4 batch
- * L1: 8x8 L0 (32x32)
- * L2: 8x8 L1 (256x256)
- * L3: 8x8 L2 (2048x2048) -> entry point
+ * l0: 4x4 batch
+ * l1: 8x8 l0 (32x32)
+ * l2: 8x8 l1 (256x256)
+ * l3: 8x8 l2 (2048x2048) -> entry point
  */
 public class DistanceGraph {
     private static final int BATCH_SIZE_SHIFT = 2; // 4 chunks
@@ -95,7 +95,7 @@ public class DistanceGraph {
                 Node root = roots.get(ChunkPos.asLong(rx, rz));
                 // check empty space even if node is null
                 double dSq = getDistSq(rx, rz, rootSize, cbx, cbz);
-                if (dSq <= (double)(rb + rootSize) * (rb + rootSize)) {
+                if (dSq <= (double)rb * rb) {
                     queue.add(new WorkItem(root, 3, rx, rz, dSq));
                 }
             }
@@ -130,7 +130,7 @@ public class DistanceGraph {
                 int cz = (item.z << 3) + (i >> 3);
                 
                 double dSq = getDistSq(cx, cz, childSize, cbx, cbz);
-                if (dSq <= (double)(rb + childSize) * (rb + childSize)) {
+                if (dSq <= (double)rb * rb) {
                     Object child = (item.node == null) ? null : item.node.children.get(i);
                     Node childNode = (child instanceof Node) ? (Node) child : null;
                     queue.add(new WorkItem(childNode, childLevel, cx, cz, dSq));
@@ -203,7 +203,7 @@ public class DistanceGraph {
             return c;
         }
 
-        // L1 partial
+        // l1 partial
         if (level == 1) {
             int c = 0;
             for (int i = 0; i < 64; i++) {

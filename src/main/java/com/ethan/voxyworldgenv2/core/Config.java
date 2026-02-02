@@ -18,24 +18,13 @@ public final class Config {
     
     public static void load() {
         if (!Files.exists(CONFIG_PATH)) {
-            // auto-configure on fresh install for general public usage
+            // auto-configure for first run
             int cores = Runtime.getRuntime().availableProcessors();
             long maxMemory = Runtime.getRuntime().maxMemory() / (1024 * 1024); // mb
             
-            // scaling logic:
-            // for active tasks, we want to utilize available threads but leave room for c2me and server.
-            // safely using 50% of cores is a good baseline imo for background tasks.
-            DATA.maxActiveTasks = Math.max(1, Math.min(16, cores / 2));
-            
-            // for radius, memory is the main constraint. 
-            // 4gb+ can handle 64 chunks easily. 8gb+ can handle 128.
-            if (maxMemory > 8000 && cores >= 12) {
-                DATA.generationRadius = 128; // extreme
-            } else if (maxMemory > 4000 && cores >= 6) {
-                DATA.generationRadius = 64; // high
-            } else {
-                DATA.generationRadius = 32; // standard
-            }
+            // scale based on hardware
+            DATA.maxActiveTasks = 20;
+            DATA.generationRadius = 128; // standard default
             
             save();
             return;
@@ -60,9 +49,11 @@ public final class Config {
     }
     
     public static class ConfigData {
-        public int generationRadius = 32;
-        public int queueUpdateInterval = 20;
+        public boolean enabled = true;
+        public boolean showF3MenuStats = true;
+        public int generationRadius = 128;
+        public int update_interval = 20; // legacy field for Compat
         public int maxQueueSize = 20000;
-        public int maxActiveTasks = 4;
+        public int maxActiveTasks = 20;
     }
 }

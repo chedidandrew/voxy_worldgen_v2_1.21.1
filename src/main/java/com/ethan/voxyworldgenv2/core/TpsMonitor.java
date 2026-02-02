@@ -9,8 +9,8 @@ public class TpsMonitor {
     private long lastTickNanos = 0;
     private final AtomicBoolean throttled = new AtomicBoolean(false);
     
-    // hardcoded standard for high performance: 18 tps (55.5ms)
-    // we allow minor dips but aggressively pause if server truly struggles
+    // standard for high performance: 18 tps (55.5ms)
+    // aggressively pause if server truly struggles
     private static final double MSPT_THRESHOLD = 1000.0 / 18.0;
 
     public void tick() {

@@ -13,6 +13,8 @@ public final class DebugRenderer {
     private DebugRenderer() {}
     
     public static void render(GuiGraphics graphics, DeltaTracker tickDelta) {
+        if (!com.ethan.voxyworldgenv2.core.Config.DATA.showF3MenuStats) return;
+        
         Minecraft mc = Minecraft.getInstance();
         
         if (!mc.getDebugOverlay().showDebugScreen()) {

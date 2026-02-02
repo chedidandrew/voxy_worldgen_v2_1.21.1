@@ -4,6 +4,10 @@
 # Log file
 *.log
 
+# Tellus + Voxy
+Tellus-main/
+voxy-dev/
+
 # Package Files
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
