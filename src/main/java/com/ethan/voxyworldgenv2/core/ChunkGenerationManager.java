@@ -216,7 +216,7 @@ public final class ChunkGenerationManager {
                                 }
                                 completeTask(pos);
                             } else {
-                                cache.addTicketWithRadius(TicketType.FORCED, pos, 0);
+                                cache.addRegionTicket(TicketType.FORCED, pos, 0, pos);
                                 actuallyGenerate.add(pos);
                             }
                         }
@@ -339,7 +339,7 @@ public final class ChunkGenerationManager {
     
     private void cleanupTask(ServerChunkCache cache, ChunkPos pos) {
         server.execute(() -> {
-            cache.removeTicketWithRadius(TicketType.FORCED, pos, 0);
+            cache.removeRegionTicket(TicketType.FORCED, pos, 0, pos);
             ((MinecraftServerExtension) server).voxyworldgen$markHousekeeping();
             ((MinecraftServerAccess) server).setEmptyTicks(0);
             completeTask(pos);

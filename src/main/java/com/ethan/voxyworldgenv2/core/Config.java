@@ -19,7 +19,9 @@ public final class Config {
     public static void load() {
         if (!Files.exists(CONFIG_PATH)) {
             // auto-configure for first run
+            @SuppressWarnings("unused")
             int cores = Runtime.getRuntime().availableProcessors();
+            @SuppressWarnings("unused")
             long maxMemory = Runtime.getRuntime().maxMemory() / (1024 * 1024); // mb
             
             // scale based on hardware

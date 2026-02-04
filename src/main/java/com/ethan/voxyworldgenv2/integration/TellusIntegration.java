@@ -2,20 +2,21 @@ package com.ethan.voxyworldgenv2.integration;
 
 import com.ethan.voxyworldgenv2.VoxyWorldGenV2;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.DataLayer;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
-import net.minecraft.world.level.chunk.DataLayer;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.core.registries.Registries;
-import net.minecraft.world.level.chunk.PalettedContainerFactory;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
@@ -25,16 +26,16 @@ import java.util.Optional;
 public final class TellusIntegration {
     private static boolean initialized = false;
     private static boolean tellusPresent = false;
-    
+
     // classes
     private static Class<?> earthChunkGeneratorClass;
     private static Class<?> tellusElevationSourceClass;
     private static Class<?> earthGeneratorSettingsClass;
-    
+
     // methods
     private static MethodHandle sampleElevationMetersMethod;
     private static MethodHandle getSettingsMethod;
-    
+
     // fields
     private static Field elevationSourceField;
 
@@ -82,7 +83,7 @@ public final class TellusIntegration {
 
             Method sampleMethod = tellusElevationSourceClass.getMethod("sampleElevationMeters", double.class, double.class, double.class, boolean.class);
             sampleElevationMetersMethod = lookup.unreflect(sampleMethod);
-            
+
             Method settingsMethod = earthChunkGeneratorClass.getMethod("settings");
             getSettingsMethod = lookup.unreflect(settingsMethod);
 
@@ -143,7 +144,7 @@ public final class TellusIntegration {
                     coverClasses[i] = (int) sampleCoverClassHandle.invoke(landCoverSource, worldX, worldZ, worldScale);
                 } catch (Throwable e) {}
             }
-            
+
             return new TellusChunkData(heights, coverClasses);
         } catch (Throwable e) {
             VoxyWorldGenV2.LOGGER.error("failed to sample tellus data for {}", pos, e);
@@ -162,13 +163,13 @@ public final class TellusIntegration {
         if (data == null) return;
         int[] heights = data.heights;
         int[] coverClasses = data.coverClasses;
-        
+
         try {
             Object generator = level.getChunkSource().getGenerator();
             Object settings = getSettingsMethod.invoke(generator);
             int seaLevel = (int) resolveSeaLevelHandle.invoke(settings);
-            
-            PalettedContainerFactory factory = PalettedContainerFactory.create(level.registryAccess());
+
+            Registry<Biome> biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
 
             BlockState stone = Blocks.STONE.defaultBlockState();
             BlockState deepslate = Blocks.DEEPSLATE.defaultBlockState();
@@ -187,16 +188,16 @@ public final class TellusIntegration {
             }
 
             LevelChunkSection[] sections = new LevelChunkSection[level.getSectionsCount()];
-            int minSectionY = level.getMinSectionY();
-            
+            int minSectionY = level.getMinSection();
+
             // optimize the solid section generation
             for (int i = 0; i < sections.length; i++) {
                 int sectionY = minSectionY + i;
                 int sectionTopY = (sectionY << 4) + 15;
-                
+
                 if (sectionTopY < globalMinH - 3) {
                     BlockState fill = sectionTopY < 0 ? deepslate : stone;
-                    LevelChunkSection section = new LevelChunkSection(factory);
+                    LevelChunkSection section = new LevelChunkSection(biomeRegistry);
                     for (int by = 0; by < 16; by++)
                         for (int bz = 0; bz < 16; bz++)
                             for (int bx = 0; bx < 16; bx++)
@@ -212,42 +213,42 @@ public final class TellusIntegration {
                 int x = i & 15;
                 int h = heights[i];
                 int coverClass = coverClasses[i];
-                
+
                 BlockState surfaceBlock = grass;
                 BlockState fillerBlock = dirt;
 
                 int eastH = (x < 15) ? heights[i + 1] : h;
                 int southH = (z < 15) ? heights[i + 16] : h;
                 int slope = Math.max(Math.abs(eastH - h), Math.abs(southH - h));
-                
+
                 if (coverClass == ESA_SNOW_ICE) {
-                   surfaceBlock = snow;
-                   fillerBlock = dirt;
+                    surfaceBlock = snow;
+                    fillerBlock = dirt;
                 }
-                
+
                 if (h <= seaLevel + 2 && slope < 2 && h >= seaLevel - 2) {
-                     surfaceBlock = sand;
-                     fillerBlock = sand;
+                    surfaceBlock = sand;
+                    fillerBlock = sand;
                 }
-                
+
                 if (slope > 2) {
                     surfaceBlock = stone;
                     fillerBlock = stone;
                 }
-                
+
                 int columnTopY = Math.max(h, seaLevel);
-                for (int y = level.getMinY(); y <= columnTopY; y++) {
+                for (int y = level.getMinBuildHeight(); y <= columnTopY; y++) {
                     int secIdx = (y >> 4) - minSectionY;
                     if (secIdx < 0 || secIdx >= sections.length) continue;
-                    
+
                     LevelChunkSection section = sections[secIdx];
                     if (section == null) {
-                        section = new LevelChunkSection(factory);
+                        section = new LevelChunkSection(biomeRegistry);
                         sections[secIdx] = section;
                     }
-                    
-                    int sectionTopY = ( (secIdx + minSectionY) << 4) + 15;
-                    
+
+                    int sectionTopY = ((secIdx + minSectionY) << 4) + 15;
+
                     // adaptive column skip
                     if (sectionTopY < globalMinH - 3) {
                         y = sectionTopY;
@@ -256,15 +257,15 @@ public final class TellusIntegration {
 
                     BlockState state = Blocks.AIR.defaultBlockState();
                     if (y < h - 3) {
-                         state = y < 0 ? deepslate : stone;
+                        state = y < 0 ? deepslate : stone;
                     } else if (y < h) {
-                         state = fillerBlock;
+                        state = fillerBlock;
                     } else if (y == h) {
-                         state = surfaceBlock;
+                        state = surfaceBlock;
                     } else if (y <= seaLevel) {
                         state = water;
                     }
-                    
+
                     if (!state.isAir()) {
                         section.setBlockState(x, y & 15, z, state, false);
                     }
@@ -275,12 +276,12 @@ public final class TellusIntegration {
             for (int i = 0; i < sections.length; i++) {
                 LevelChunkSection section = sections[i];
                 if (section != null && !section.hasOnlyAir()) {
-                     section.recalcBlockCounts();
-                     int sectionY = minSectionY + i;
-                     VoxyIntegration.rawIngest(level, section, pos.x, sectionY, pos.z, FULL_LIGHT);
+                    section.recalcBlockCounts();
+                    int sectionY = minSectionY + i;
+                    VoxyIntegration.rawIngest(level, section, pos.x, sectionY, pos.z, FULL_LIGHT);
                 }
             }
-            
+
             VoxyWorldGenV2.LOGGER.info("ingested tellus chunk for {}", pos);
         } catch (Throwable e) {
             VoxyWorldGenV2.LOGGER.error("failed to build tellus chunk for {}", pos, e);

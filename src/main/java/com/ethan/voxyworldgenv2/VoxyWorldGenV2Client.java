@@ -11,6 +11,7 @@ import net.minecraft.client.Minecraft;
 @Environment(EnvType.CLIENT)
 public class VoxyWorldGenV2Client implements ClientModInitializer {
     
+    @SuppressWarnings("deprecation")
     @Override
     public void onInitializeClient() {
         VoxyWorldGenV2.LOGGER.info("initializing voxy world gen v2 client");

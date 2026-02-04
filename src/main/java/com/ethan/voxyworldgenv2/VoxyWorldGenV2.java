@@ -9,6 +9,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@SuppressWarnings("unused")
 public class VoxyWorldGenV2 implements ModInitializer {
     public static final String MOD_ID = "voxyworldgenv2";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);

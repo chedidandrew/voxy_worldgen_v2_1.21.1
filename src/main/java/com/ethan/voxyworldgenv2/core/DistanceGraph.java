@@ -154,6 +154,7 @@ public class DistanceGraph {
         return lx + (lz << 3);
     }
 
+    @SuppressWarnings("unused")
     public int countMissingInRange(ChunkPos center, int radiusChunks) {
         int cbx = center.x >> BATCH_SIZE_SHIFT;
         int cbz = center.z >> BATCH_SIZE_SHIFT;

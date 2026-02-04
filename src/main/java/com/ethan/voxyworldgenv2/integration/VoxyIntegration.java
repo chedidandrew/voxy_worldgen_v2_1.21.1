@@ -100,7 +100,7 @@ public final class VoxyIntegration {
             net.minecraft.world.level.chunk.LevelChunkSection[] sections = chunk.getSections();
             int cx = chunk.getPos().x;
             int cz = chunk.getPos().z;
-            int minY = chunk.getMinSectionY();
+            int minSection = chunk.getMinSection();
             
             // get worldid once per chunk
             Object worldId = worldIdentifierOfMethod.invoke(chunk.getLevel());
@@ -110,7 +110,8 @@ public final class VoxyIntegration {
                 net.minecraft.world.level.chunk.LevelChunkSection section = sections[i];
                 if (section == null || section.hasOnlyAir()) continue;
                 
-                rawIngestMethod.invoke(worldId, section, cx, minY + i, cz, null, skyLight);
+                rawIngestMethod.invoke(worldId, section, cx, minSection + i, cz, null, skyLight);
+
             }
         } catch (Throwable e) {
             VoxyWorldGenV2.LOGGER.error("failed to raw ingest chunk", e);
