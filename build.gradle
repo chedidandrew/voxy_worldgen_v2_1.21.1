@@ -56,3 +56,9 @@ jar {
         rename { "${it}_${mod_name}" }
     }
 }
+
+loom {
+    mixin {
+        defaultRefmapName = "voxyworldgenv2.refmap.json"
+    }
+}

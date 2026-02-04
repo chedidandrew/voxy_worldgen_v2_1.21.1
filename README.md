@@ -12,7 +12,7 @@ This is a rewrite of my old Voxy World Gen mod, this mod is NOT a fork of the pa
 
 ## Dependencies
 
-- **Minecraft**: 1.21.6 - 1.21.11 (Tested on 1.21.11, anything less is considered unstable and may not work)
+- **Minecraft**: 1.21.1 (Tested on 1.21.1, anything less or more is considered unstable and may not work)
 - **Fabric Loader**: >= 0.16.0
 - **Java**: 21 (Required)
 - **Fabric API**

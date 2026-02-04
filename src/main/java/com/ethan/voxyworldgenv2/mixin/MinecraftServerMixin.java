@@ -15,15 +15,17 @@ import java.util.function.BooleanSupplier;
 
 @Mixin(MinecraftServer.class)
 public abstract class MinecraftServerMixin implements MinecraftServerExtension {
+
     @Shadow
     public abstract Iterable<ServerLevel> getAllLevels();
 
     @Unique
     private final AtomicBoolean needHousekeeping = new AtomicBoolean(false);
 
-    @Inject(method = "tickServer", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/MinecraftServer;tickConnection()V"))
-    private void voxyworldgen$onTick(BooleanSupplier booleanSupplier, CallbackInfo ci) {
-        this.voxyworldgen$runHousekeeping(booleanSupplier);
+    // 1.21.1: MinecraftServer has tickWorlds(BooleanSupplier)
+    @Inject(method = "tickChildren(Ljava/util/function/BooleanSupplier;)V", at = @At("TAIL"))
+    private void voxyworldgen$onTickWorlds(BooleanSupplier shouldKeepTicking, CallbackInfo ci) {
+        this.voxyworldgen$runHousekeeping(shouldKeepTicking);
     }
 
     @Override

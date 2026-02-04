@@ -2,7 +2,7 @@ package com.ethan.voxyworldgenv2.core;
 
 import com.ethan.voxyworldgenv2.VoxyWorldGenV2;
 import com.ethan.voxyworldgenv2.integration.VoxyIntegration;
-import com.ethan.voxyworldgenv2.mixin.MinecraftServerAccess;
+//import com.ethan.voxyworldgenv2.mixin.MinecraftServerAccess;
 import com.ethan.voxyworldgenv2.mixin.ServerChunkCacheMixin;
 import com.ethan.voxyworldgenv2.stats.GenerationStats;
 import net.minecraft.resources.ResourceKey;
@@ -341,7 +341,7 @@ public final class ChunkGenerationManager {
         server.execute(() -> {
             cache.removeRegionTicket(TicketType.FORCED, pos, 0, pos);
             ((MinecraftServerExtension) server).voxyworldgen$markHousekeeping();
-            ((MinecraftServerAccess) server).setEmptyTicks(0);
+            //((MinecraftServerAccess) server).setEmptyTicks(0);
             completeTask(pos);
         });
     }

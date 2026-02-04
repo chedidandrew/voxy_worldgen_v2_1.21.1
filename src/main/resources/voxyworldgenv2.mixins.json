@@ -6,7 +6,6 @@
   "mixins": [
     "ChunkMapMixin",
     "MinecraftServerMixin",
-    "MinecraftServerAccess",
     "ServerChunkCacheMixin",
     "ServerLevelMixin"
   ],
